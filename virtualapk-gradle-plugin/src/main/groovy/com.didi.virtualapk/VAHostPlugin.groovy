@@ -1,12 +1,18 @@
 package com.didi.virtualapk
 
 import com.android.build.gradle.api.ApplicationVariant
+import com.android.build.gradle.internal.api.ApplicationVariantImpl
+import com.android.build.gradle.internal.ide.ArtifactDependencyGraph
 import com.android.build.gradle.internal.pipeline.TransformTask
+import com.android.build.gradle.internal.publishing.AndroidArtifacts
 import com.android.build.gradle.internal.transforms.ProGuardTransform
-import com.android.build.gradle.tasks.ProcessAndroidResources;
-import com.didi.virtualapk.utils.FileUtil;
-import org.gradle.api.Plugin;
-import org.gradle.api.Project;
+import com.android.build.gradle.tasks.ProcessAndroidResources
+import com.didi.virtualapk.utils.FileUtil
+import org.gradle.api.Plugin
+import org.gradle.api.Project
+import org.gradle.api.artifacts.component.ComponentIdentifier
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 
 /**
  * VirtualAPK gradle plugin for host project,
@@ -35,7 +41,7 @@ public class VAHostPlugin implements Plugin<Project> {
 
         project.afterEvaluate {
 
-            project.android.applicationVariants.each { ApplicationVariant variant ->
+            project.android.applicationVariants.each { ApplicationVariantImpl variant ->
                 generateDependencies(variant)
                 backupHostR(variant)
                 backupProguardMapping(variant)
@@ -48,7 +54,7 @@ public class VAHostPlugin implements Plugin<Project> {
     /**
      * Generate ${project.buildDir}/VAHost/versions.txt
      */
-    def generateDependencies(ApplicationVariant applicationVariant) {
+    def generateDependencies(ApplicationVariantImpl applicationVariant) {
 
         applicationVariant.javaCompile.doLast {
 
@@ -57,8 +63,18 @@ public class VAHostPlugin implements Plugin<Project> {
                 project.configurations.each {
                     String configName = it.name
 
-                    it.resolvedConfiguration.resolvedArtifacts.each {
-                        deps.add("${configName} -> ${it.moduleVersion.id}")
+                    if (!it.canBeResolved) {
+                        deps.add("${configName} -> NOT READY")
+                        return
+                    }
+
+                    try {
+                        it.resolvedConfiguration.resolvedArtifacts.each {
+                            deps.add("${configName} -> id: ${it.moduleVersion.id}, type: ${it.type}, ext: ${it.extension}")
+                        }
+
+                    } catch (Exception e) {
+                        deps.add("${configName} -> ${e}")
                     }
                 }
                 Collections.sort(deps)
@@ -67,12 +83,26 @@ public class VAHostPlugin implements Plugin<Project> {
 
             FileUtil.saveFile(vaHostDir, "versions", {
                 List<String> deps = new ArrayList<String>()
-                project.configurations.getByName("_${applicationVariant.name}Compile").resolvedConfiguration.resolvedArtifacts.each {
-                    deps.add("${it.moduleVersion.id} ${it.file.length()}")
+                println "Used compileClasspath: ${applicationVariant.name}"
+                Set<ArtifactDependencyGraph.HashableResolvedArtifactResult> compileArtifacts = ArtifactDependencyGraph.getAllArtifacts(
+                        applicationVariant.variantData.scope, AndroidArtifacts.ConsumedConfigType.COMPILE_CLASSPATH, null);
+
+                compileArtifacts.each { ArtifactDependencyGraph.HashableResolvedArtifactResult artifact ->
+                    ComponentIdentifier id = artifact.id.componentIdentifier
+                    if (id instanceof ProjectComponentIdentifier) {
+                        deps.add("${id.projectPath.replace(':', '')}:${ArtifactDependencyGraph.getVariant(artifact)}:unspecified ${artifact.file.length()}")
+
+                    } else if (id instanceof ModuleComponentIdentifier) {
+                        deps.add("${id.group}:${id.module}:${id.version} ${artifact.file.length()}")
+
+                    } else {
+                        deps.add("${artifact.id.displayName.replace(':', '')}:unspecified:unspecified ${artifact.file.length()}")
+                    }
                 }
+
                 Collections.sort(deps)
-                return deps;
-            });
+                return deps
+            })
         }
 
     }
@@ -86,7 +116,7 @@ public class VAHostPlugin implements Plugin<Project> {
 
         aaptTask.doLast {
             project.copy {
-                from new File(aaptTask.textSymbolOutputDir, 'R.txt')
+                from aaptTask.textSymbolOutputFile
                 into vaHostDir
                 rename { "Host_R.txt" }
             }

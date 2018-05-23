@@ -3,13 +3,10 @@ package com.didi.virtualapk.hooker
 import com.android.build.gradle.AndroidConfig
 import com.android.build.gradle.AppExtension
 import com.android.build.gradle.api.ApkVariant
-import com.android.build.gradle.internal.packaging.ParsedPackagingOptions
 import com.android.build.gradle.internal.pipeline.TransformTask
-import com.android.build.gradle.internal.transforms.MergeJavaResourcesTransform
 import com.didi.virtualapk.collector.HostJniLibsCollector
+import com.didi.virtualapk.utils.Log
 import org.gradle.api.Project
-
-import java.lang.reflect.Field
 
 /**
  * Remove the Native libs(.so) in stripped dependencies before mergeJniLibs task
@@ -28,7 +25,7 @@ class MergeJniLibsHooker extends GradleTaskHooker<TransformTask> {
     }
 
     @Override
-    String getTaskName() {
+    String getTransformName() {
         return "mergeJniLibs"
     }
 
@@ -43,11 +40,12 @@ class MergeJniLibsHooker extends GradleTaskHooker<TransformTask> {
 
         excludeJniFiles.each {
             androidConfig.packagingOptions.exclude("/${it}")
+            Log.i 'MergeJniLibsHooker', "Stripped jni file: ${it}"
         }
 
-        Field field = MergeJavaResourcesTransform.class.getDeclaredField('packagingOptions')
-        field.setAccessible(true)
-        field.set(task.transform, new ParsedPackagingOptions(androidConfig.packagingOptions))
+        mark()
+//        Reflect.on(task.transform)
+//                .set('packagingOptions', new ParsedPackagingOptions(androidConfig.packagingOptions))
     }
 
     @Override
